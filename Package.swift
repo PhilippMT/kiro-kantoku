@@ -13,8 +13,7 @@ let linkerSettings: [LinkerSetting] = []
 let package = Package(
     name: "KiroKantoku",
     platforms: [
-        .macOS(.v14),
-        .linux
+        .macOS(.v14)
     ],
     dependencies: [
         .package(url: "https://github.com/aptove/swift-sdk", from: "0.1.0")
@@ -29,10 +28,10 @@ let package = Package(
             path: "Sources/KiroKantoku",
             exclude: ["Info.plist"],
             resources: [.copy("Resources/Kiroween")],
-            linkerSettings: linkerSettings,
             swiftSettings: [
                 .define("CROSS_PLATFORM_BUILD")
-            ]
+            ],
+            linkerSettings: linkerSettings
         ),
         .testTarget(
             name: "KiroKantokuTests",

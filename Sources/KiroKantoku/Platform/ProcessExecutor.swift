@@ -1,11 +1,5 @@
 import Foundation
 
-#if os(macOS) || os(Linux)
-import Darwin
-#elseif os(Windows)
-import WinSDK
-#endif
-
 // MARK: - Unix Process Executor (macOS & Linux)
 
 #if os(macOS) || os(Linux)
@@ -69,11 +63,66 @@ actor UnixProcessHandle: ProcessHandle {
     private let stdoutPipe: Pipe
     private let stderrPipe: Pipe
 
+    nonisolated let stdout: AsyncStream<Data>
+    nonisolated let stderr: AsyncStream<Data>
+    private let stdoutContinuation: AsyncStream<Data>.Continuation
+    private let stderrContinuation: AsyncStream<Data>.Continuation
+
     init(process: Process, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
         self.process = process
         self.stdinPipe = stdinPipe
         self.stdoutPipe = stdoutPipe
         self.stderrPipe = stderrPipe
+
+        // Create streams for stdout and stderr
+        var tempStdoutContinuation: AsyncStream<Data>.Continuation!
+        var tempStderrContinuation: AsyncStream<Data>.Continuation!
+
+        let stdoutStream = AsyncStream<Data> { continuation in
+            tempStdoutContinuation = continuation
+        }
+        let stderrStream = AsyncStream<Data> { continuation in
+            tempStderrContinuation = continuation
+        }
+
+        self.stdout = stdoutStream
+        self.stderr = stderrStream
+        self.stdoutContinuation = tempStdoutContinuation
+        self.stderrContinuation = tempStderrContinuation
+
+        // Start background reading tasks
+        Task { await self.readStdoutLoop() }
+        Task { await self.readStderrLoop() }
+    }
+
+    private func readStdoutLoop() async {
+        let handle = stdoutPipe.fileHandleForReading
+        while !Task.isCancelled && process.isRunning {
+            let data = await Task {
+                handle.availableData
+            }.value
+            if !data.isEmpty {
+                stdoutContinuation.yield(data)
+            } else {
+                break
+            }
+        }
+        stdoutContinuation.finish()
+    }
+
+    private func readStderrLoop() async {
+        let handle = stderrPipe.fileHandleForReading
+        while !Task.isCancelled && process.isRunning {
+            let data = await Task {
+                handle.availableData
+            }.value
+            if !data.isEmpty {
+                stderrContinuation.yield(data)
+            } else {
+                break
+            }
+        }
+        stderrContinuation.finish()
     }
 
     public var processId: Int32 {
@@ -111,6 +160,19 @@ actor UnixProcessHandle: ProcessHandle {
 
     public var isRunning: Bool {
         return process.isRunning
+    }
+
+    nonisolated public var hasExited: Bool {
+        return !process.isRunning
+    }
+
+    /// Get access to underlying pipes for ACP ProcessTransport compatibility
+    nonisolated public func getStdinPipe() -> Pipe {
+        return stdinPipe
+    }
+
+    nonisolated public func getStdoutPipe() -> Pipe {
+        return stdoutPipe
     }
 }
 
@@ -179,11 +241,66 @@ actor WindowsProcessHandle: ProcessHandle {
     private let stdoutPipe: Pipe
     private let stderrPipe: Pipe
 
+    nonisolated let stdout: AsyncStream<Data>
+    nonisolated let stderr: AsyncStream<Data>
+    private let stdoutContinuation: AsyncStream<Data>.Continuation
+    private let stderrContinuation: AsyncStream<Data>.Continuation
+
     init(process: Process, stdinPipe: Pipe, stdoutPipe: Pipe, stderrPipe: Pipe) {
         self.process = process
         self.stdinPipe = stdinPipe
         self.stdoutPipe = stdoutPipe
         self.stderrPipe = stderrPipe
+
+        // Create streams for stdout and stderr
+        var tempStdoutContinuation: AsyncStream<Data>.Continuation!
+        var tempStderrContinuation: AsyncStream<Data>.Continuation!
+
+        let stdoutStream = AsyncStream<Data> { continuation in
+            tempStdoutContinuation = continuation
+        }
+        let stderrStream = AsyncStream<Data> { continuation in
+            tempStderrContinuation = continuation
+        }
+
+        self.stdout = stdoutStream
+        self.stderr = stderrStream
+        self.stdoutContinuation = tempStdoutContinuation
+        self.stderrContinuation = tempStderrContinuation
+
+        // Start background reading tasks
+        Task { await self.readStdoutLoop() }
+        Task { await self.readStderrLoop() }
+    }
+
+    private func readStdoutLoop() async {
+        let handle = stdoutPipe.fileHandleForReading
+        while !Task.isCancelled && process.isRunning {
+            let data = await Task {
+                handle.availableData
+            }.value
+            if !data.isEmpty {
+                stdoutContinuation.yield(data)
+            } else {
+                break
+            }
+        }
+        stdoutContinuation.finish()
+    }
+
+    private func readStderrLoop() async {
+        let handle = stderrPipe.fileHandleForReading
+        while !Task.isCancelled && process.isRunning {
+            let data = await Task {
+                handle.availableData
+            }.value
+            if !data.isEmpty {
+                stderrContinuation.yield(data)
+            } else {
+                break
+            }
+        }
+        stderrContinuation.finish()
     }
 
     public var processId: Int32 {
@@ -221,6 +338,19 @@ actor WindowsProcessHandle: ProcessHandle {
 
     public var isRunning: Bool {
         return process.isRunning
+    }
+
+    nonisolated public var hasExited: Bool {
+        return !process.isRunning
+    }
+
+    /// Get access to underlying pipes for ACP ProcessTransport compatibility
+    nonisolated public func getStdinPipe() -> Pipe {
+        return stdinPipe
+    }
+
+    nonisolated public func getStdoutPipe() -> Pipe {
+        return stdoutPipe
     }
 }
 

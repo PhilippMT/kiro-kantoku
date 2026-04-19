@@ -58,6 +58,15 @@ public protocol ProcessHandle: Sendable {
 
     /// Check if process is still running
     var isRunning: Bool { get async }
+
+    /// Stream of stdout data chunks
+    var stdout: AsyncStream<Data> { get }
+
+    /// Stream of stderr data chunks
+    var stderr: AsyncStream<Data> { get }
+
+    /// Check if process has exited
+    var hasExited: Bool { get }
 }
 
 // MARK: - Configuration Storage Protocol
@@ -65,25 +74,25 @@ public protocol ProcessHandle: Sendable {
 /// Protocol for platform-agnostic configuration storage
 public protocol ConfigurationStore: Sendable {
     /// Get a string value for the given key
-    func getString(_ key: String) -> String?
+    func getString(_ key: String) async -> String?
 
     /// Set a string value for the given key
     func setString(_ key: String, value: String) async throws
 
     /// Get an integer value for the given key
-    func getInt(_ key: String) -> Int?
+    func getInt(_ key: String) async -> Int?
 
     /// Set an integer value for the given key
     func setInt(_ key: String, value: Int) async throws
 
     /// Get a boolean value for the given key
-    func getBool(_ key: String) -> Bool?
+    func getBool(_ key: String) async -> Bool?
 
     /// Set a boolean value for the given key
     func setBool(_ key: String, value: Bool) async throws
 
     /// Get a double value for the given key
-    func getDouble(_ key: String) -> Double?
+    func getDouble(_ key: String) async -> Double?
 
     /// Set a double value for the given key
     func setDouble(_ key: String, value: Double) async throws
@@ -127,7 +136,7 @@ public protocol FileWatcher: Sendable {
 }
 
 public struct FileChangeEvent: Sendable {
-    public enum EventType {
+    public enum EventType: Sendable {
         case created
         case modified
         case deleted

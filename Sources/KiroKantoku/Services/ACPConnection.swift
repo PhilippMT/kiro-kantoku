@@ -2,6 +2,10 @@ import Foundation
 import ACPModel
 import ACP
 
+#if canImport(Platform)
+import Platform
+#endif
+
 /// Errors that can occur during ACP connection operations
 public enum ACPConnectionError: Error, Sendable, LocalizedError {
     case notConnected
@@ -34,9 +38,9 @@ public enum ACPConnectionError: Error, Sendable, LocalizedError {
 public final class ProcessTransport: Transport, @unchecked Sendable {
     private let stdinPipe: Pipe
     private let stdoutPipe: Pipe
-    
+
     private let stateActor: ProcessTransportStateActor
-    
+
     /// Handler for Kiro vendor extension notifications (_kiro.dev/*)
     public var kiroNotificationHandler: (@Sendable (String, JsonValue?) async -> Void)?
     
@@ -271,23 +275,21 @@ private actor ProcessTransportStateActor {
 
 /// Actor that manages a kiro-cli subprocess for ACP communication using the SDK's ClientConnection.
 public actor ACPConnection {
-    private var process: Process?
+    private var processHandle: (any ProcessHandle)?
 
     /// PID of the kiro-cli process, if running
     public var processId: Int32? {
-        process?.isRunning == true ? process?.processIdentifier : nil
+        processHandle?.processId
     }
-    private var stdinPipe: Pipe?
-    private var stdoutPipe: Pipe?
-    private var stderrPipe: Pipe?
-    
+
     private var clientConnection: ClientConnection?
     private var kiroClient: KiroClient?
     private var transport: ProcessTransport?
-    
+
     /// Whether the connection is currently active
     public var isConnected: Bool {
-        process?.isRunning ?? false
+        guard let handle = processHandle else { return false }
+        return !handle.hasExited
     }
     
     public init() {}
@@ -306,61 +308,54 @@ public actor ACPConnection {
         onKiroNotification: (@Sendable (String, JsonValue?) async -> Void)? = nil,
         onPermissionRequest: ((@Sendable (ToolCallUpdateData, [PermissionOption], @escaping @Sendable (RequestPermissionOutcome) -> Void) -> Void))? = nil
     ) async throws {
-        guard process == nil else {
+        guard processHandle == nil else {
             // Already connected
             return
         }
-        
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: kirocliPath.hasPrefix("~")
-            ? kirocliPath.replacingOccurrences(of: "~", with: FileManager.default.homeDirectoryForCurrentUser.path, options: .anchored)
-            : kirocliPath)
-        
+
+        // Use platform abstraction for process execution
+        let processExecutor = UnixProcessExecutor()
+
+        // Expand tilde in path
+        let expandedPath = PlatformPaths.expandTilde(kirocliPath)
+
         var arguments = ["acp"]
         if let config = agentConfig {
             arguments.append("--agent")
             arguments.append(config)
         }
-        proc.arguments = arguments
-        
-        // Set up pipes for communication
-        let stdin = Pipe()
-        let stdout = Pipe()
-        let stderr = Pipe()
-        
-        proc.standardInput = stdin
-        proc.standardOutput = stdout
-        proc.standardError = stderr
-        
-        stdinPipe = stdin
-        stdoutPipe = stdout
-        stderrPipe = stderr
-        
+
+        let handle: UnixProcessHandle
         do {
-            try proc.run()
-            process = proc
+            let spawned = try await processExecutor.spawn(
+                executable: expandedPath,
+                arguments: arguments,
+                environment: nil,
+                workingDirectory: nil
+            )
+            guard let unixHandle = spawned as? UnixProcessHandle else {
+                throw ACPConnectionError.processSpawnFailed("Invalid process handle type")
+            }
+            handle = unixHandle
+            processHandle = handle
         } catch {
             throw ACPConnectionError.processSpawnFailed(error.localizedDescription)
         }
-        
+
         // Log stderr in background and accumulate for error detection
         nonisolated(unsafe) var stderrBuffer = ""
-        nonisolated(unsafe) var stderrFinished = false
-        Task.detached { @Sendable [stderr] in
-            while true {
-                let data = stderr.fileHandleForReading.availableData
-                if data.isEmpty {
-                    stderrFinished = true
-                    break
-                }
-                if let text = String(data: data, encoding: .utf8) {
+        Task.detached { @Sendable [handle] in
+            for await chunk in handle.stderr {
+                if let text = String(data: chunk, encoding: .utf8) {
                     print("[ACP-stderr] \(text)")
                     stderrBuffer += text
                 }
             }
         }
-        
-        // Create transport with process pipes
+
+        // Create transport with process pipes (extracted from handle)
+        let stdin = handle.getStdinPipe()
+        let stdout = handle.getStdoutPipe()
         let processTransport = ProcessTransport(stdinPipe: stdin, stdoutPipe: stdout)
         processTransport.kiroNotificationHandler = onKiroNotification
         transport = processTransport
@@ -393,8 +388,10 @@ public actor ACPConnection {
 
     /// Synchronously kill the kiro-cli process (for app quit)
     public func killProcess() {
-        if let proc = process, proc.isRunning {
-            proc.terminate()
+        if let handle = processHandle, !handle.hasExited {
+            Task {
+                try? await handle.terminate()
+            }
         }
     }
 
@@ -412,16 +409,13 @@ public actor ACPConnection {
             await transport.close()
         }
         transport = nil
-        
-        if let proc = process, proc.isRunning {
-            proc.terminate()
-            proc.waitUntilExit()
+
+        if let handle = processHandle, !handle.hasExited {
+            try? await handle.terminate()
+            _ = try? await handle.waitForExit()
         }
-        
-        process = nil
-        stdinPipe = nil
-        stdoutPipe = nil
-        stderrPipe = nil
+
+        processHandle = nil
     }
     
     /// Create a new session

@@ -30,7 +30,7 @@ public actor JSONConfigurationStore: ConfigurationStore {
 
     // MARK: - String Operations
 
-    public func getString(_ key: String) -> String? {
+    public func getString(_ key: String) async -> String? {
         return data[key] as? String
     }
 
@@ -40,7 +40,7 @@ public actor JSONConfigurationStore: ConfigurationStore {
 
     // MARK: - Integer Operations
 
-    public func getInt(_ key: String) -> Int? {
+    public func getInt(_ key: String) async -> Int? {
         return data[key] as? Int
     }
 
@@ -50,7 +50,7 @@ public actor JSONConfigurationStore: ConfigurationStore {
 
     // MARK: - Boolean Operations
 
-    public func getBool(_ key: String) -> Bool? {
+    public func getBool(_ key: String) async -> Bool? {
         return data[key] as? Bool
     }
 
@@ -60,7 +60,7 @@ public actor JSONConfigurationStore: ConfigurationStore {
 
     // MARK: - Double Operations
 
-    public func getDouble(_ key: String) -> Double? {
+    public func getDouble(_ key: String) async -> Double? {
         return data[key] as? Double
     }
 
