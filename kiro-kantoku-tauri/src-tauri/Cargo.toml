@@ -28,6 +28,11 @@ thiserror = "1"
 async-process = "2"
 futures = "0.3"
 
+# ACP SDK
+agent-client-protocol = "0.10"
+tokio-util = { version = "0.7", features = ["compat"] }
+uuid = { version = "1.18", features = ["v4"] }
+
 # File watching
 notify = "6"
 

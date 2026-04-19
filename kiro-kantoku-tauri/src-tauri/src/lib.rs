@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
 mod acp;
+mod acp_client;
 mod commands;
 mod process;
 mod state;
