@@ -9,10 +9,9 @@ use agent_client_protocol::{
         RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
         SelectedPermissionOutcome, SessionNotification, TextContent,
     },
-    Agent, ByteStreams, Client, ConnectionTo,
+    Agent, ByteStreams, ConnectionTo,
 };
-use anyhow::{Context, Result};
-use futures::FutureExt;
+use anyhow::Context;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,7 +41,6 @@ pub struct PermissionRequestData {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PermissionOption {
     pub option_id: String,
-    pub description: String,
 }
 
 /// ACP client connection to a kiro-cli agent
@@ -60,7 +58,7 @@ impl AcpClient {
         session_update_tx: mpsc::UnboundedSender<SessionUpdateEvent>,
         permission_request_tx: mpsc::UnboundedSender<PermissionRequestData>,
         permission_response_rx: mpsc::UnboundedReceiver<String>,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         // Spawn the kiro-cli process
         let mut cmd = tokio::process::Command::new(&kiro_cli_path);
         cmd.stdin(std::process::Stdio::piped())
@@ -94,7 +92,10 @@ impl AcpClient {
                 .on_receive_notification(
                     async move |notification: SessionNotification, _cx| {
                         // Forward session updates to the frontend
-                        let event = Self::parse_session_update(notification.update);
+                        // Convert SessionUpdate to JSON Value for parsing
+                        let update_json = serde_json::to_value(&notification.update)
+                            .unwrap_or(serde_json::Value::Null);
+                        let event = Self::parse_session_update(update_json);
                         let _ = session_update_tx_clone.send(event);
                         Ok(())
                     },
@@ -108,8 +109,7 @@ impl AcpClient {
                             .options
                             .iter()
                             .map(|opt| PermissionOption {
-                                option_id: opt.option_id.clone(),
-                                description: opt.description.clone(),
+                                option_id: opt.option_id.to_string(),
                             })
                             .collect();
 
@@ -158,7 +158,7 @@ impl AcpClient {
                         .await?;
 
                     // Keep the connection alive
-                    futures::future::pending::<Result<()>>().await
+                    futures::future::pending::<agent_client_protocol::Result<()>>().await
                 })
                 .await;
 
@@ -240,7 +240,7 @@ impl AcpClient {
     }
 
     /// Disconnect and cleanup
-    pub async fn disconnect(mut self) -> Result<()> {
+    pub async fn disconnect(mut self) -> anyhow::Result<()> {
         self.process_handle.kill().await?;
         Ok(())
     }
@@ -253,22 +253,23 @@ pub struct AcpConnectionHandle {
 
 impl AcpConnectionHandle {
     /// Create a new session
-    pub async fn new_session(&self, cwd: PathBuf) -> Result<String> {
+    pub async fn new_session(&self, cwd: PathBuf) -> anyhow::Result<String> {
         let response = self
             .connection
             .send_request(NewSessionRequest::new(cwd))
             .block_task()
             .await?;
 
-        Ok(response.session_id)
+        Ok(response.session_id.to_string())
     }
 
     /// Send a prompt to a session
-    pub async fn send_prompt(&self, session_id: String, prompt: String) -> Result<()> {
+    pub async fn send_prompt(&self, session_id: String, prompt: String) -> anyhow::Result<()> {
+        use agent_client_protocol::schema::SessionId;
         let _response = self
             .connection
             .send_request(PromptRequest::new(
-                session_id,
+                SessionId::from(session_id),
                 vec![ContentBlock::Text(TextContent::new(prompt))],
             ))
             .block_task()
