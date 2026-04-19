@@ -3,6 +3,7 @@
 mod acp;
 mod acp_client;
 mod commands;
+mod git;
 mod process;
 mod state;
 
@@ -29,6 +30,9 @@ pub fn run() {
             commands::acp_connect,
             commands::acp_disconnect,
             commands::acp_send_prompt,
+            commands::check_git_repo,
+            commands::create_git_worktree,
+            commands::remove_git_worktree,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

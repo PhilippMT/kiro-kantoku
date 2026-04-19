@@ -1,6 +1,8 @@
 /// Tauri commands for the frontend to call
 use crate::acp_client::AcpClient;
+use crate::git;
 use crate::state::{ActiveConnection, AppState};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::{mpsc, Mutex};
@@ -90,5 +92,58 @@ pub async fn acp_send_prompt(
 ) -> Result<String, String> {
     // TODO: Implement prompt sending via connection handle
     Ok("response".to_string())
+}
+
+// Git commands
+
+#[derive(serde::Serialize)]
+pub struct GitRepoInfo {
+    is_repo: bool,
+    current_branch: Option<String>,
+}
+
+#[tauri::command]
+pub async fn check_git_repo(directory: String) -> Result<GitRepoInfo, String> {
+    let path = PathBuf::from(directory);
+
+    let is_repo = git::is_git_repo(&path).unwrap_or(false);
+
+    let current_branch = if is_repo {
+        git::get_current_branch(&path).ok()
+    } else {
+        None
+    };
+
+    Ok(GitRepoInfo {
+        is_repo,
+        current_branch,
+    })
+}
+
+#[tauri::command]
+pub async fn create_git_worktree(
+    directory: String,
+    branch_name: String,
+) -> Result<String, String> {
+    let path = PathBuf::from(directory);
+
+    let worktree_path = git::create_worktree(&path, &branch_name)
+        .map_err(|e| format!("Failed to create worktree: {}", e))?;
+
+    Ok(worktree_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn remove_git_worktree(
+    repo_path: String,
+    worktree_path: String,
+) -> Result<(), String> {
+    let repo = PathBuf::from(repo_path);
+    let worktree = PathBuf::from(worktree_path);
+
+    git::remove_worktree(&repo, &worktree)
+        .map_err(|e| format!("Failed to remove worktree: {}", e))?;
+
+    Ok(())
 }
 
