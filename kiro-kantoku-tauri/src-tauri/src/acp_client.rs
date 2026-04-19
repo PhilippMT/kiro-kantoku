@@ -28,7 +28,33 @@ pub enum SessionUpdateEvent {
     AgentThought { content: String },
     PlanUpdate { plan: String },
     CommandsAvailable { commands: Vec<String> },
+    // Kiro vendor extensions
+    KiroCommandsAvailable { commands: Vec<KiroCommand> },
+    KiroMetadata { context_usage: f64 },
+    KiroAgentSwitched { agent_name: String, previous_agent: String, welcome_message: Option<String> },
+    KiroCompactionStatus { message: String },
+    KiroClearStatus { message: String },
+    KiroMcpOAuthRequest { url: String },
     Other { data: Value },
+}
+
+/// Kiro command definition
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KiroCommand {
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<KiroCommandMeta>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KiroCommandMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options_method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local: Option<bool>,
 }
 
 /// Permission request that needs user approval
@@ -237,6 +263,91 @@ impl AcpClient {
         }
 
         SessionUpdateEvent::Other { data: update }
+    }
+
+    /// Parse a Kiro vendor extension notification
+    pub fn parse_kiro_notification(method: &str, params: Value) -> Option<SessionUpdateEvent> {
+        match method {
+            "_kiro.dev/commands/available" => {
+                if let Ok(commands) = serde_json::from_value::<Vec<KiroCommand>>(
+                    params.get("commands").cloned().unwrap_or(Value::Array(vec![]))
+                ) {
+                    return Some(SessionUpdateEvent::KiroCommandsAvailable { commands });
+                }
+            }
+            "_kiro.dev/metadata" => {
+                if let Some(context_usage) = params.get("contextUsagePercentage").and_then(|v| v.as_f64()) {
+                    return Some(SessionUpdateEvent::KiroMetadata { context_usage });
+                }
+            }
+            "_kiro.dev/agent/switched" => {
+                let agent_name = params.get("agentName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let previous_agent = params.get("previousAgentName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let welcome_message = params.get("welcomeMessage")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                return Some(SessionUpdateEvent::KiroAgentSwitched {
+                    agent_name,
+                    previous_agent,
+                    welcome_message,
+                });
+            }
+            "_kiro.dev/compaction/status" => {
+                if let Some(message) = params.get("message").and_then(|v| v.as_str()) {
+                    return Some(SessionUpdateEvent::KiroCompactionStatus {
+                        message: message.to_string(),
+                    });
+                }
+            }
+            "_kiro.dev/clear/status" => {
+                if let Some(message) = params.get("message").and_then(|v| v.as_str()) {
+                    return Some(SessionUpdateEvent::KiroClearStatus {
+                        message: message.to_string(),
+                    });
+                }
+            }
+            "_kiro.dev/mcp/oauth_request" => {
+                if let Some(url) = params.get("url").and_then(|v| v.as_str()) {
+                    return Some(SessionUpdateEvent::KiroMcpOAuthRequest {
+                        url: url.to_string(),
+                    });
+                }
+            }
+            "_kiro.dev/session/update" => {
+                // Handle multiplexed session updates
+                if let Some(update_type) = params.get("sessionUpdate").and_then(|v| v.as_str()) {
+                    match update_type {
+                        "agent_thought_chunk" => {
+                            if let Some(content) = params.get("content")
+                                .and_then(|v| v.get("text"))
+                                .and_then(|v| v.as_str())
+                            {
+                                return Some(SessionUpdateEvent::AgentThought {
+                                    content: content.to_string(),
+                                });
+                            }
+                        }
+                        "plan" => {
+                            // Convert KiroPlanUpdate to PlanUpdate format
+                            if let Some(plan_json) = params.get("steps") {
+                                if let Ok(plan_str) = serde_json::to_string(plan_json) {
+                                    return Some(SessionUpdateEvent::PlanUpdate { plan: plan_str });
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
     }
 
     /// Disconnect and cleanup
