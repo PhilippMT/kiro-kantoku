@@ -26,6 +26,7 @@ thiserror = "1"
 
 # Process management
 async-process = "2"
+futures = "0.3"
 
 # File watching
 notify = "6"
