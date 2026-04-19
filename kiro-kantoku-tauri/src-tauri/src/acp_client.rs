@@ -12,6 +12,7 @@ use agent_client_protocol::{
     Agent, ByteStreams, Client, ConnectionTo,
 };
 use anyhow::{Context, Result};
+use futures::FutureExt;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -89,7 +90,7 @@ impl AcpClient {
         let permission_request_tx_clone = permission_request_tx.clone();
 
         tokio::spawn(async move {
-            let result = Client.builder()
+            let result = agent_client_protocol::Client.builder()
                 .on_receive_notification(
                     async move |notification: SessionNotification, _cx| {
                         // Forward session updates to the frontend
@@ -97,10 +98,10 @@ impl AcpClient {
                         let _ = session_update_tx_clone.send(event);
                         Ok(())
                     },
-                    agent_client_protocol::on_receive_notification!(),
+                    |f: &mut _, notif, cx| Box::pin(f(notif, cx)),
                 )
                 .on_receive_request(
-                    async move |request: RequestPermissionRequest, responder, _connection| {
+                    async move |request: RequestPermissionRequest, responder, _connection| -> agent_client_protocol::Result<()> {
                         // Send permission request to frontend
                         let request_id = uuid::Uuid::new_v4().to_string();
                         let options = request
@@ -119,9 +120,10 @@ impl AcpClient {
 
                         if permission_request_tx_clone.send(permission_data).is_err() {
                             // Channel closed, respond with cancelled
-                            return responder.respond(RequestPermissionResponse::new(
+                            responder.respond(RequestPermissionResponse::new(
                                 RequestPermissionOutcome::Cancelled,
                             ));
+                            return Ok(());
                         }
 
                         // Wait for response from frontend
@@ -136,16 +138,17 @@ impl AcpClient {
                                     RequestPermissionOutcome::Selected(
                                         SelectedPermissionOutcome::new(option_id),
                                     ),
-                                ))
+                                ));
                             }
                             _ => {
                                 responder.respond(RequestPermissionResponse::new(
                                     RequestPermissionOutcome::Cancelled,
-                                ))
+                                ));
                             }
                         }
+                        Ok(())
                     },
-                    agent_client_protocol::on_receive_request!(),
+                    |f: &mut _, req, responder, cx| Box::pin(f(req, responder, cx)),
                 )
                 .connect_with(transport, |connection: ConnectionTo<Agent>| async move {
                     // Initialize the agent
