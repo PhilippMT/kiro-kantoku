@@ -28,6 +28,9 @@ let package = Package(
             path: "Sources/KiroKantoku",
             exclude: ["Info.plist"],
             resources: [.copy("Resources/Kiroween")],
+            swiftSettings: [
+                .define("CROSS_PLATFORM_BUILD")
+            ],
             linkerSettings: linkerSettings
         ),
         .testTarget(
